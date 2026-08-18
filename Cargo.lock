@@ -168,6 +168,7 @@ dependencies = [
  "clap",
  "cross-exec",
  "cross-spawn",
+ "fork",
  "log",
  "pidlock",
  "shlex",
@@ -191,6 +192,15 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "fork"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aafa2fb0e6b3b0886eb36b909c13a5e3dc9d7e0cf436376e43f095177050c029"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "hashbrown"

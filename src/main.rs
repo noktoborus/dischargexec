@@ -2,6 +2,7 @@ extern crate starship_battery as battery;
 
 use clap::{Parser, Subcommand};
 use cross_exec::CommandExt;
+use fork::daemon;
 use log::LevelFilter;
 use log::{debug, info};
 use pidlock::Pidlock;
@@ -70,60 +71,79 @@ fn main() -> battery::Result<()> {
 
     let temp_dir = std::env::temp_dir();
     let lock_path = temp_dir.join("dischargexec.pid");
-    let mut lock = Pidlock::new_validated(&lock_path).map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("Lock file is not valid: {}", e),
-        )
-    })?;
 
     match &cli.command {
-        Commands::Exec { command } => match lock.acquire() {
-            Ok(_) => {
-                let Some(command) = shlex::split(command) else {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "Bad Command",
-                    ))?
-                };
-                let (prog, args) = command.split_first().ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "Empty command")
-                })?;
+        Commands::Exec { command } => {
+            daemon(true, true).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to fork: {}", e))
+            })?;
 
-                info!("Wait discharge event");
-                monitor_battery()?;
-                info!("Discharding detected, execute command: {:?}", command);
+            let mut lock = Pidlock::new_validated(&lock_path).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Lock file is not valid: {}", e),
+                )
+            })?;
 
-                let err = Command::new(prog).args(args).cross_exec();
-                Err(err.into())
+            match lock.acquire() {
+                Ok(_) => {
+                    let Some(command) = shlex::split(command) else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "Bad Command",
+                        ))?
+                    };
+                    let (prog, args) = command.split_first().ok_or_else(|| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, "Empty command")
+                    })?;
+
+                    info!("Wait discharge event");
+                    monitor_battery()?;
+                    info!("Discharding detected, execute command: {:?}", command);
+
+                    let err = Command::new(prog).args(args).cross_exec();
+                    Err(err.into())
+                }
+
+                Err(pidlock::PidlockError::LockExists) => Err(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    format!("Another instance is already running"),
+                ))?,
+
+                Err(e) => Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to acquire lock: {}", e),
+                ))?,
             }
+        }
+        Commands::Abort => {
+            let lock = Pidlock::new_validated(&lock_path).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Lock file is not valid: {}", e),
+                )
+            })?;
 
-            Err(pidlock::PidlockError::LockExists) => Err(std::io::Error::new(
-                std::io::ErrorKind::AddrInUse,
-                format!("Another instance is already running"),
-            ))?,
-
-            Err(e) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to acquire lock: {}", e),
-            ))?,
-        },
-        Commands::Abort => match lock.get_owner() {
-            Ok(Some(pid)) => {
-                info!("Kill {}", pid);
-                cross_spawn::kill(pid.try_into().unwrap()).map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to kill: {}", e))
-                })?;
-                Ok(())
+            match lock.get_owner() {
+                Ok(Some(pid)) => {
+                    info!("Kill {}", pid);
+                    cross_spawn::kill(pid.try_into().unwrap()).map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("Failed to kill: {}", e),
+                        )
+                    })?;
+                    Ok(())
+                }
+                Ok(None) => Err(std::io::Error::new(
+                    std::io::ErrorKind::AddrNotAvailable,
+                    format!("No running instance found"),
+                ))?,
+                Err(e) => Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to get lock owner: {}", e),
+                ))?,
             }
-            Ok(None) => Err(std::io::Error::new(
-                std::io::ErrorKind::AddrNotAvailable,
-                format!("No running instance found"),
-            ))?,
-            Err(e) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to get lock owner: {}", e),
-            ))?,
-        },
+        }
     }
 }

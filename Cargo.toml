@@ -7,6 +7,7 @@ edition = "2024"
 clap = { version = "4.6.6", features = ["derive"] }
 cross-exec = "0.1.2"
 cross-spawn = "0.1.3"
+fork = "0.10.0"
 log = "0.4.33"
 pidlock = "0.2.2"
 shlex = "2.0.1"
